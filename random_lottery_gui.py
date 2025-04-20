@@ -21,6 +21,28 @@ class LotteryApp:
     CENTER_Y_OFFSET = 0
     RADIUS_REDUCTION = 100
     
+    # 그룹 정의
+    GROUPS = {
+        'A': range(1, 7),
+        'B': range(7, 13),
+        'C': range(13, 19),
+        'D': range(19, 25),
+        'E': range(25, 31),
+        'F': range(31, 37),
+        'G': range(37, 44)
+    }
+    
+    # 그룹별 색상
+    GROUP_COLORS = {
+        'A': '#FFB3BA',  # 연한 빨강
+        'B': '#BAFFC9',  # 연한 초록
+        'C': '#BAE1FF',  # 연한 파랑
+        'D': '#FFFFBA',  # 연한 노랑
+        'E': '#FFB3FF',  # 연한 보라
+        'F': '#B3FFE0',  # 연한 민트
+        'G': '#FFD7B3'   # 연한 주황
+    }
+    
     # 결과 저장 파일 경로
     HISTORY_FILE = "lottery_history.json"
     
@@ -32,6 +54,7 @@ class LotteryApp:
         # 결과 저장용 변수
         self.current_results = []
         self.previous_results = self.load_previous_results()
+        self.is_grouped = False  # 그룹 표시 상태
         
         self._init_ui()
         
@@ -99,6 +122,10 @@ class LotteryApp:
         # 버튼 프레임
         button_frame = ttk.Frame(parent)
         button_frame.pack(fill="x", pady=10)
+
+        # 그룹으로 묶기 버튼
+        self.group_button = ttk.Button(button_frame, text="그룹으로 묶기", command=self.toggle_groups)
+        self.group_button.pack(side="right", padx=5)
 
         # 추첨 버튼
         self.draw_button = ttk.Button(button_frame, text="자리 배치하기", command=self.draw_lots)
@@ -255,6 +282,128 @@ class LotteryApp:
         prev_names = set(name for _, name in previous_combination)
         return new_names == prev_names
 
+    def toggle_groups(self):
+        """그룹 표시 토글"""
+        if not self.current_results:
+            messagebox.showwarning("경고", "먼저 자리 배치를 해주세요!")
+            return
+            
+        self.is_grouped = not self.is_grouped
+        self.redraw_seats()
+    
+    def get_group_for_number(self, number):
+        """번호에 해당하는 그룹 찾기"""
+        for group, number_range in self.GROUPS.items():
+            if number in number_range:
+                return group
+        return None
+
+    def draw_group_circle(self, group_members, group):
+        """그룹별 원 그리기"""
+        if not group_members:
+            return
+            
+        # 그룹 멤버들의 좌표 평균 계산
+        center_x = sum(x for x, _, _ in group_members) / len(group_members)
+        center_y = sum(y for _, y, _ in group_members) / len(group_members)
+        
+        # 그룹 원의 반지름 계산
+        radius = max(
+            math.sqrt((x - center_x)**2 + (y - center_y)**2)
+            for x, y, _ in group_members
+        ) + self.SEAT_WIDTH
+
+        # 배경 원 먼저 그리기 (매우 투명하게)
+        bg_color = self.GROUP_COLORS[group]
+        r = int(bg_color[1:3], 16)
+        g = int(bg_color[3:5], 16)
+        b = int(bg_color[5:7], 16)
+        transparent_color = f'#{r:02x}{g:02x}{b:02x}20'  # 알파값 20 (매우 투명)
+        
+        self.seat_canvas.create_oval(
+            center_x - radius, center_y - radius,
+            center_x + radius, center_y + radius,
+            fill=transparent_color,
+            outline='',  # 외곽선 없음
+            width=0
+        )
+        
+        # 그룹 레이블 표시 (더 크고 굵게)
+        self.seat_canvas.create_text(
+            center_x, center_y - radius - 15,
+            text=f'Group {group}',
+            fill='black',
+            font=('Arial', 14, 'bold')
+        )
+        
+        # 그룹 원 테두리 그리기 (검은색 굵은 선)
+        self.seat_canvas.create_oval(
+            center_x - radius, center_y - radius,
+            center_x + radius, center_y + radius,
+            outline='black',
+            width=3,
+            dash=(10, 4),  # 더 긴 점선으로 수정
+            fill=''  # 투명 배경
+        )
+
+    def redraw_seats(self):
+        """자리 배치 다시 그리기"""
+        self.seat_canvas.delete("all")
+        
+        # 캔버스 중심점 계산
+        center_x = self.CANVAS_WIDTH // 2
+        center_y = self.CANVAS_HEIGHT // 2
+        radius = min(center_x, center_y) - self.RADIUS_REDUCTION
+        
+        total_seats = len(self.current_results)
+        
+        # 정보 표시 영역 그리기
+        self._draw_info_area(total_seats)
+        
+        angle_step = 2 * math.pi / total_seats
+        start_angle = math.pi / 2
+        
+        # 그룹별 멤버 좌표 저장 및 그룹 원 먼저 그리기
+        if self.is_grouped:
+            group_members = {group: [] for group in self.GROUPS.keys()}
+            
+            # 좌표 계산
+            for i, (number, _) in enumerate(self.current_results):
+                angle = start_angle - (i * angle_step)
+                x = center_x + radius * math.cos(angle)
+                y = center_y - radius * math.sin(angle)
+                
+                group = self.get_group_for_number(number)
+                if group:
+                    group_members[group].append((x, y, angle))
+            
+            # 그룹 원 먼저 그리기
+            for group, members in group_members.items():
+                if members:
+                    self.draw_group_circle(members, group)
+        
+        # 그 다음 좌석과 텍스트 그리기
+        for i, (number, name) in enumerate(self.current_results):
+            angle = start_angle - (i * angle_step)
+            x = center_x + radius * math.cos(angle)
+            y = center_y - radius * math.sin(angle)
+            
+            # 좌석 배경색 설정 (그룹별 색상)
+            group = self.get_group_for_number(number)
+            fill_color = self.GROUP_COLORS.get(group, "#E3F2FD") if self.is_grouped else "#E3F2FD"
+            
+            # 좌석 그리기
+            self.seat_canvas.create_rectangle(
+                x - self.SEAT_WIDTH/2, y - self.SEAT_HEIGHT/2,
+                x + self.SEAT_WIDTH/2, y + self.SEAT_HEIGHT/2,
+                outline="#1976D2",
+                fill=fill_color,
+                width=2
+            )
+            
+            # 번호와 이름 그리기
+            self.draw_seat(number, name, x, y, angle)
+
     def draw_lots(self):
         """추첨 및 자리 배치"""
         names = [entry.get().strip() for entry in self.name_entries if entry.get().strip()]
@@ -292,31 +441,15 @@ class LotteryApp:
                 
             attempt += 1
 
-        # 캔버스 중심점 계산
-        center_x = self.CANVAS_WIDTH // 2
-        center_y = self.CANVAS_HEIGHT // 2
-        radius = min(center_x, center_y) - self.RADIUS_REDUCTION
-
-        # 정보 표시 영역 그리기
-        self._draw_info_area(len(names))
+        # 결과 표시 전에 그룹 상태 초기화
+        self.is_grouped = False
         
-        # 좌석 배치 (완전한 원형으로)
-        total_seats = len(names)
-        angle_step = 2 * math.pi / total_seats  # 균일한 각도 간격
-        
-        # 시작 각도를 12시 방향으로 설정
-        start_angle = math.pi / 2
-        
-        for i, (number, name) in enumerate(self.current_results):
-            angle = start_angle - (i * angle_step)  # 시계 방향으로 회전
-            x = center_x + radius * math.cos(angle)
-            y = center_y - radius * math.sin(angle)
-            
-            self.draw_seat(number, name, x, y, angle)
+        # 자리 배치 그리기
+        self.redraw_seats()
         
         # 결과 저장
         self.save_current_results()
-            
+        
         # 결과 표시
         self._show_results()
 
